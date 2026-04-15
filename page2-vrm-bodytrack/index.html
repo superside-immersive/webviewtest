@@ -102,13 +102,18 @@
       top: 10px;
       right: 10px;
       z-index: 101;
-      padding: 8px 12px;
-      background: rgba(0,0,0,0.7);
-      color: #fff;
-      border: 1px solid rgba(255,255,255,0.25);
+      padding: 10px 14px;
+      max-width: min(78vw, 420px);
+      background: rgba(154, 14, 31, 0.92);
+      color: #fff5f5;
+      border: 1px solid rgba(255, 190, 190, 0.65);
       border-radius: 999px;
       font-family: monospace;
       font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
       pointer-events: none;
     }
   </style>
@@ -120,7 +125,7 @@
   <video id="camera-preview" autoplay playsinline muted></video>
   <canvas id="tracking-overlay"></canvas>
   <canvas id="three-canvas"></canvas>
-  <div id="tracking-badge">Pose helper: esperando cámara</div>
+  <div id="tracking-badge">Pose helper | build 2026-04-15a | esperando cámara</div>
   <div id="pose-debug">Pose: esperando...</div>
 
   <script type="module">
@@ -141,11 +146,18 @@
     const debugEl = document.getElementById('pose-debug');
     const trackingBadgeEl = document.getElementById('tracking-badge');
     const trackingOverlayEl = document.getElementById('tracking-overlay');
+    const POSE_HELPER_BUILD = 'build 2026-04-15a';
+    const setTrackingBadge = (message) => {
+      trackingBadgeEl.textContent = `Pose helper | ${POSE_HELPER_BUILD} | ${message}`;
+    };
+
     const setStatus = (msg, autoHide = 0) => {
       statusEl.textContent = msg;
       statusEl.style.display = 'block';
       if (autoHide > 0) setTimeout(() => statusEl.style.display = 'none', autoHide);
     };
+
+    setTrackingBadge('esperando cámara');
 
     // ==========================================
     // THREE.JS SCENE SETUP (Minimal)
@@ -281,12 +293,12 @@
         await new Promise((resolve) => { videoEl.onloadeddata = resolve; });
         cameraReady = true;
         console.log('✅ Camera ready');
-        trackingBadgeEl.textContent = 'Pose helper: cámara activa';
+        setTrackingBadge('camara activa');
         TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Pose helper activo');
         setStatus('✅ Cámara lista. Inicializando MediaPipe...');
       } catch (err) {
         console.error('Camera error:', err);
-        trackingBadgeEl.textContent = 'Pose helper: cámara bloqueada';
+        setTrackingBadge('camara bloqueada');
         setStatus(`❌ Error cámara: ${err.message}`);
       }
     }
@@ -317,11 +329,11 @@
         });
 
         console.log('✅ PoseLandmarker ready (LITE)');
-        trackingBadgeEl.textContent = 'Pose helper: trackeando';
+        setTrackingBadge('trackeando');
         setStatus('✅ Todo listo — Pose Lite + VRM body retarget listo', 5000);
       } catch (err) {
         console.error('MediaPipe init error:', err);
-        trackingBadgeEl.textContent = 'Pose helper: error MediaPipe';
+        setTrackingBadge('error mediapipe');
         setStatus(`❌ Error MediaPipe: ${err.message}`);
       }
     }
@@ -357,9 +369,7 @@
               debugCounter++;
               TrackingHelpers.drawPose(trackingOverlayEl, videoEl, lm, { mirrored: true });
               latestRetargetStats = bodyRetargeter?.update(result, deltaSeconds) ?? null;
-              trackingBadgeEl.textContent = worldLm?.length
-                ? 'Pose helper: trackeando 3D'
-                : 'Pose helper: trackeando 2D';
+              setTrackingBadge(worldLm?.length ? 'trackeando 3d' : 'trackeando 2d');
               if (debugCounter % 15 === 0) {
                 const nose = lm[0];
                 const lShoulder = lm[11];
@@ -378,7 +388,7 @@
                 debugEl.innerHTML = 'Pose: buscando...';
                 poseDetected = false;
               }
-              trackingBadgeEl.textContent = 'Pose helper: sin landmarks';
+              setTrackingBadge('sin landmarks');
               TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Pose helper sin landmarks');
             }
           } catch (err) {
