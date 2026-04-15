@@ -122,7 +122,7 @@
 
   <div id="stats-container"></div>
   <div id="status">⏳ Inicializando...</div>
-  <video id="camera-preview" autoplay playsinline muted></video>
+  <video id="camera-preview" autoplay playsinline webkit-playsinline="true" muted></video>
   <canvas id="tracking-overlay"></canvas>
   <canvas id="three-canvas"></canvas>
   <div id="tracking-badge">Pose helper | build 2026-04-15a | esperando cámara</div>
@@ -147,6 +147,14 @@
     const trackingBadgeEl = document.getElementById('tracking-badge');
     const trackingOverlayEl = document.getElementById('tracking-overlay');
     const POSE_HELPER_BUILD = 'build 2026-04-15a';
+    const runtimeEnv = (() => {
+      const userAgent = navigator.userAgent || '';
+      const isIOS = /iPad|iPhone|iPod/.test(userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      const isSlack = /Slack/i.test(userAgent);
+      const delegateOrder = (isIOS || isSlack) ? ['CPU', 'GPU'] : ['GPU', 'CPU'];
+      return { userAgent, isIOS, isSlack, delegateOrder };
+    })();
+
     const setTrackingBadge = (message) => {
       trackingBadgeEl.textContent = `Pose helper | ${POSE_HELPER_BUILD} | ${message}`;
     };
@@ -307,6 +315,36 @@
     // MEDIAPIPE POSE LANDMARKER (LITE)
     // ==========================================
     let poseLandmarker = null;
+    let activePoseDelegate = 'unknown';
+
+    async function createPoseLandmarkerWithFallback(vision) {
+      let lastError = null;
+
+      for (const delegate of runtimeEnv.delegateOrder) {
+        try {
+          const landmarker = await PoseLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task',
+              delegate,
+            },
+            runningMode: 'VIDEO',
+            numPoses: 1,
+            minPoseDetectionConfidence: 0.5,
+            minPosePresenceConfidence: 0.5,
+            minTrackingConfidence: 0.5,
+            outputSegmentationMasks: false,
+          });
+
+          activePoseDelegate = delegate;
+          return landmarker;
+        } catch (error) {
+          lastError = error;
+          console.warn(`PoseLandmarker ${delegate} init failed`, error);
+        }
+      }
+
+      throw lastError ?? new Error('Unable to initialize PoseLandmarker');
+    }
 
     if (cameraReady) {
       try {
@@ -315,22 +353,12 @@
           'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
         );
 
-        poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task',
-            delegate: 'GPU'
-          },
-          runningMode: 'VIDEO',
-          numPoses: 1,
-          minPoseDetectionConfidence: 0.5,
-          minPosePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-          outputSegmentationMasks: false
-        });
+        poseLandmarker = await createPoseLandmarkerWithFallback(vision);
 
-        console.log('✅ PoseLandmarker ready (LITE)');
+        window.__page2Runtime = { runtimeEnv, activePoseDelegate };
+        console.log(`✅ PoseLandmarker ready (LITE, ${activePoseDelegate})`);
         setTrackingBadge('trackeando');
-        setStatus('✅ Todo listo — Pose Lite + VRM body retarget listo', 5000);
+        setStatus(`✅ Todo listo — Pose Lite + VRM body retarget (${activePoseDelegate})`, 5000);
       } catch (err) {
         console.error('MediaPipe init error:', err);
         setTrackingBadge('error mediapipe');

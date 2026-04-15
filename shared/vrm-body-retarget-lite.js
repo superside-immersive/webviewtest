@@ -103,7 +103,7 @@ function quaternionFromLookRotation(forward, up, targetQuaternion) {
 }
 
 function projectWorldLandmark(target, landmark) {
-  return target.set(landmark.x, landmark.y, -(landmark.z ?? 0));
+  return target.set(landmark.x, -landmark.y, landmark.z ?? 0);
 }
 
 function projectNormalizedLandmark(target, landmark) {
