@@ -103,11 +103,19 @@ function quaternionFromLookRotation(forward, up, targetQuaternion) {
 }
 
 function projectWorldLandmark(target, landmark) {
-  return target.set(-landmark.x, landmark.y, landmark.z ?? 0);
+  return target.set(landmark.x, landmark.y, -(landmark.z ?? 0));
 }
 
 function projectNormalizedLandmark(target, landmark) {
-  return target.set(0.5 - landmark.x, 0.5 - landmark.y, -(landmark.z ?? 0));
+  return target.set(landmark.x - 0.5, 0.5 - landmark.y, -(landmark.z ?? 0));
+}
+
+function composeWithRestWorld(deltaRotation, restWorldRotation) {
+  if (!deltaRotation || !restWorldRotation) {
+    return null;
+  }
+
+  return deltaRotation.clone().multiply(restWorldRotation).normalize();
 }
 
 function uniquePush(array, item) {
@@ -162,7 +170,6 @@ export class VrmBodyRetargetLite {
     this.bones = {};
     this.restLocal = {};
     this.restWorld = {};
-    this.restForward = {};
     this.aims = {};
     this.controlledBones = [];
     this.lastTrackedAt = 0;
@@ -240,7 +247,6 @@ export class VrmBodyRetargetLite {
     this.bones[name] = bone;
     this.restLocal[name] = bone.quaternion.clone();
     this.restWorld[name] = bone.getWorldQuaternion(new THREE.Quaternion());
-    this.restForward[name] = new THREE.Vector3(0, 0, 1).applyQuaternion(this.restWorld[name]).normalize();
     uniquePush(this.controlledBones, bone);
     return bone;
   }
@@ -385,11 +391,6 @@ export class VrmBodyRetargetLite {
       return null;
     }
 
-    if (this.restForward.hips && forward.dot(this.restForward.hips) < 0) {
-      hipRight.negate();
-      forward.negate();
-    }
-
     const rootUp = new THREE.Vector3().crossVectors(forward, hipRight);
     if (!normalizeVector(rootUp)) {
       return null;
@@ -400,7 +401,11 @@ export class VrmBodyRetargetLite {
       return null;
     }
 
-    this._slerpBoneWorld(this.bones.hips, hipsDelta, lerpFactor);
+    this._slerpBoneWorld(
+      this.bones.hips,
+      composeWithRestWorld(hipsDelta, this.restWorld.hips),
+      lerpFactor,
+    );
 
     const shoulderRight = rightShoulder.clone().sub(leftShoulder);
     if (!normalizeVector(shoulderRight)) {
@@ -410,11 +415,6 @@ export class VrmBodyRetargetLite {
     const spineForward = new THREE.Vector3().crossVectors(shoulderRight, torsoUp);
     if (!normalizeVector(spineForward)) {
       return null;
-    }
-
-    if (this.restForward.spine && spineForward.dot(this.restForward.spine) < 0) {
-      shoulderRight.negate();
-      spineForward.negate();
     }
 
     const spineUp = new THREE.Vector3().crossVectors(spineForward, shoulderRight);
@@ -427,9 +427,13 @@ export class VrmBodyRetargetLite {
       return null;
     }
 
-    this._slerpBoneWorld(this.bones.spine, spineDelta, lerpFactor * this.options.spineFollow);
-    this._slerpBoneWorld(this.bones.chest, spineDelta, lerpFactor * this.options.chestFollow);
-    this._slerpBoneWorld(this.bones.upperChest, spineDelta, lerpFactor * this.options.upperChestFollow);
+    const spineWorld = composeWithRestWorld(spineDelta, this.restWorld.spine);
+    const chestWorld = composeWithRestWorld(spineDelta, this.restWorld.chest);
+    const upperChestWorld = composeWithRestWorld(spineDelta, this.restWorld.upperChest);
+
+    this._slerpBoneWorld(this.bones.spine, spineWorld, lerpFactor * this.options.spineFollow);
+    this._slerpBoneWorld(this.bones.chest, chestWorld, lerpFactor * this.options.chestFollow);
+    this._slerpBoneWorld(this.bones.upperChest, upperChestWorld, lerpFactor * this.options.upperChestFollow);
 
     return {
       shoulderMid,
@@ -490,8 +494,11 @@ export class VrmBodyRetargetLite {
       return;
     }
 
-    this._slerpBoneWorld(this.bones.neck, headDelta, lerpFactor * this.options.neckFollow);
-    this._slerpBoneWorld(this.bones.head, headDelta, lerpFactor * this.options.headFollow);
+    const neckWorld = composeWithRestWorld(headDelta, this.restWorld.neck);
+    const headWorld = composeWithRestWorld(headDelta, this.restWorld.head);
+
+    this._slerpBoneWorld(this.bones.neck, neckWorld, lerpFactor * this.options.neckFollow);
+    this._slerpBoneWorld(this.bones.head, headWorld, lerpFactor * this.options.headFollow);
   }
 
   _applyParentRelativeLimbChain(poseData, upperAim, lowerAim, upperStart, upperEnd, lowerEnd, lerpFactor) {
