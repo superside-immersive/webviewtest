@@ -102,6 +102,27 @@ function quaternionFromLookRotation(forward, up, targetQuaternion) {
   return targetQuaternion.setFromRotationMatrix(matrix).normalize();
 }
 
+function getQuaternionForwardVector(quaternion, target) {
+  return target.set(0, 0, 1).applyQuaternion(quaternion);
+}
+
+function alignForwardToReference(forward, referenceQuaternion) {
+  if (!forward || !referenceQuaternion) {
+    return forward;
+  }
+
+  const referenceForward = getQuaternionForwardVector(referenceQuaternion, new THREE.Vector3());
+  if (!normalizeVector(referenceForward)) {
+    return forward;
+  }
+
+  if (forward.dot(referenceForward) < 0) {
+    forward.negate();
+  }
+
+  return forward;
+}
+
 function projectWorldLandmark(target, landmark) {
   return target.set(landmark.x, -landmark.y, landmark.z ?? 0);
 }
@@ -390,6 +411,7 @@ export class VrmBodyRetargetLite {
     if (!normalizeVector(forward)) {
       return null;
     }
+    alignForwardToReference(forward, this.restWorld.hips);
 
     const rootUp = new THREE.Vector3().crossVectors(forward, hipRight);
     if (!normalizeVector(rootUp)) {
@@ -416,6 +438,7 @@ export class VrmBodyRetargetLite {
     if (!normalizeVector(spineForward)) {
       return null;
     }
+    alignForwardToReference(spineForward, this.restWorld.chest ?? this.restWorld.spine);
 
     const spineUp = new THREE.Vector3().crossVectors(spineForward, shoulderRight);
     if (!normalizeVector(spineUp)) {
@@ -479,6 +502,8 @@ export class VrmBodyRetargetLite {
     if (!normalizeVector(headForward)) {
       return;
     }
+
+    alignForwardToReference(headForward, this.restWorld.head);
 
     if (headForward.dot(torsoForward) < 0) {
       headForward.negate();
