@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Demo 1: AR SLAM + Interacción</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+
+    <script>
+      (function () {
+        const { pathname, search, hash } = window.location;
+        const lastSegment = pathname.split('/').pop();
+        if (lastSegment && !lastSegment.includes('.') && !pathname.endsWith('/')) {
+          window.location.replace(`${pathname}/${search}${hash}`);
+        }
+      })();
+    </script>
+
+    <script src="../shared/fps-overlay.js"></script>
+  <script src="../shared/tracking-helpers.js"></script>
+    <link rel="stylesheet" href="../shared/fps-overlay.css">
+
+    <!-- 1. A-Frame BEFORE the engine -->
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+
+    <!-- XR Extras - provides gesture detection and manipulation components -->
+    <script src="//cdn.8thwall.com/web/xrextras/xrextras.js"></script>
+
+    <!-- 2. 8th Wall Engine (standalone binary) - loaded dynamically for local fallback -->
+    <script>
+      window.xrEngineAvailable = false;
+      window.xrEngineLoad = new Promise((resolve) => {
+        const xrScript = document.createElement('script');
+        xrScript.async = true;
+        xrScript.src = './xr-standalone/xr.js';
+        xrScript.dataset.preloadChunks = 'slam';
+        xrScript.onload = () => {
+          window.xrEngineAvailable = true;
+          resolve(true);
+        };
+        xrScript.onerror = () => {
+          console.warn('xr-standalone/xr.js not found; running in local 3D preview mode');
+          resolve(false);
+        };
+        document.head.appendChild(xrScript);
+      });
+    </script>
+
+    <!-- 3. Set up THREE namespace IMMEDIATELY after A-Frame -->
+    <script>
+      if (window.AFRAME && window.AFRAME.THREE) {
+        window.THREE = window.AFRAME.THREE;
+        console.log('✅ THREE bridged from AFRAME.THREE');
+      }
+    </script>
+
+    <!-- 4. Three.js loaders + VRM -->
+    <script src="https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@1.0.9/lib/three-vrm.js"></script>
+
+    <!-- Three.js loaders via ESM import -->
+    <script>
+      let gltfResolve, gltfReject;
+      window.gltfLoaderReady = new Promise((resolve, reject) => {
+        gltfResolve = resolve;
+        gltfReject = reject;
+      });
+      window._gltfLoaderResolve = gltfResolve;
+      window._gltfLoaderReject = gltfReject;
+
+      let fbxResolve, fbxReject;
+      window.fbxLoaderReady = new Promise((resolve, reject) => {
+        fbxResolve = resolve;
+        fbxReject = reject;
+      });
+      window._fbxLoaderResolve = fbxResolve;
+      window._fbxLoaderReject = fbxReject;
+    </script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module">
+      (async () => {
+        try {
+          const [{ GLTFLoader }, { FBXLoader }] = await Promise.all([
+            import('three/addons/loaders/GLTFLoader.js'),
+            import('three/addons/loaders/FBXLoader.js')
+          ]);
+          window.GLTFLoader = GLTFLoader;
+          window.FBXLoader = FBXLoader;
+          if (window._gltfLoaderResolve) window._gltfLoaderResolve(GLTFLoader);
+          if (window._fbxLoaderResolve) window._fbxLoaderResolve(FBXLoader);
+          console.log('✅ GLTFLoader + FBXLoader ready');
+        } catch (error) {
+          if (window._gltfLoaderReject) window._gltfLoaderReject(error);
+          if (window._fbxLoaderReject) window._fbxLoaderReject(error);
+          console.error('Three.js loaders failed:', error);
+        }
+      })();
+    </script>
+
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+      }
+      body {
+        position: relative;
+      }
+      #camera-preview {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transform: scaleX(-1);
+        z-index: 0;
+        display: none;
+        background: #050505;
+      }
+      #tracking-overlay {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 1;
+        pointer-events: none;
+        display: none;
+      }
+      a-scene {
+        position: fixed !important;
+        inset: 0;
+        z-index: 2;
+        background: transparent !important;
+      }
+      .a-canvas {
+        background: transparent !important;
+      }
+      /* Hide A-Frame VR buttons */
+      .a-enter-vr, .a-enter-ar,
+      .a-enter-vr-button, .a-enter-ar-button,
+      [class*="immersive-web"], [class*="webxr"] {
+        display: none !important;
+      }
+
+      /* Sound buttons overlay */
+      #sound-buttons {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10;
+        display: flex;
+        gap: 12px;
+      }
+      .sound-btn {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        border: 2px solid rgba(255,255,255,0.3);
+        background: rgba(0,0,0,0.6);
+        backdrop-filter: blur(10px);
+        color: #fff;
+        font-size: 1.2rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s ease;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+      }
+      .sound-btn:active {
+        transform: scale(0.9);
+        background: rgba(255,255,255,0.2);
+        border-color: rgba(255,255,255,0.6);
+      }
+
+      /* Status banner */
+      #status-banner {
+        position: fixed;
+        top: 85px;
+        left: 10px;
+        right: 10px;
+        background: rgba(0,0,0,0.85);
+        color: #0f0;
+        font-family: monospace;
+        font-size: 12px;
+        padding: 8px 12px;
+        border-radius: 6px;
+        z-index: 100;
+        line-height: 1.4;
+        pointer-events: none;
+      }
+      #tracking-badge {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        z-index: 101;
+        padding: 8px 12px;
+        background: rgba(0,0,0,0.7);
+        color: #fff;
+        border: 1px solid rgba(255,255,255,0.25);
+        border-radius: 999px;
+        font-family: monospace;
+        font-size: 11px;
+        pointer-events: none;
+      }
+
+      /* Jump instruction */
+      #tap-hint {
+        position: fixed;
+        bottom: 100px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0,0,0,0.7);
+        color: #fff;
+        font-family: sans-serif;
+        font-size: 13px;
+        padding: 8px 16px;
+        border-radius: 20px;
+        z-index: 10;
+        pointer-events: none;
+        opacity: 0.8;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- Stats.js container -->
+    <div id="stats-container"></div>
+    <video id="camera-preview" autoplay playsinline muted></video>
+    <canvas id="tracking-overlay"></canvas>
+    <div id="tracking-badge">Camera helper: XR / fallback</div>
+
+    <!-- Status banner -->
+    <div id="status-banner">⏳ Cargando...</div>
+
+    <!-- Tap hint -->
+    <div id="tap-hint">👆 Tocá el personaje para que salte</div>
+
+    <!-- Sound buttons -->
+    <div id="sound-buttons">
+      <button class="sound-btn" id="sound-btn-1" data-sound="1">🔊</button>
+      <button class="sound-btn" id="sound-btn-2" data-sound="2">🎵</button>
+      <button class="sound-btn" id="sound-btn-3" data-sound="3">🎶</button>
+    </div>
+
+    <script>
+      // ==========================================
+      // STATS.JS SETUP
+      // ==========================================
+      const stats = window.createStatsOverlay();
+      stats.showPanel(0); // FPS
+      const statsContainer = document.getElementById('stats-container');
+      statsContainer.appendChild(stats.dom);
+
+      // ==========================================
+      // SOUND SYSTEM - Preload and play
+      // ==========================================
+      const sounds = {};
+      const soundAvailability = {};
+      const soundFiles = {
+        1: './assets/sound1.mp3',
+        2: './assets/sound2.mp3',
+        3: './assets/sound3.mp3'
+      };
+
+      const tonePresets = {
+        1: { frequency: 523.25, type: 'triangle', duration: 0.16 },
+        2: { frequency: 659.25, type: 'sine', duration: 0.18 },
+        3: { frequency: 783.99, type: 'square', duration: 0.14 }
+      };
+      let audioContext = null;
+
+      const getAudioContext = () => {
+        const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextCtor) return null;
+        if (!audioContext) audioContext = new AudioContextCtor();
+        if (audioContext.state === 'suspended') {
+          audioContext.resume().catch(() => {});
+        }
+        return audioContext;
+      };
+
+      const playTone = (soundId) => {
+        const context = getAudioContext();
+        const preset = tonePresets[soundId];
+        if (!context || !preset) return;
+
+        const now = context.currentTime;
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+
+        oscillator.type = preset.type;
+        oscillator.frequency.setValueAtTime(preset.frequency, now);
+
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.08, now + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + preset.duration);
+
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(now);
+        oscillator.stop(now + preset.duration + 0.02);
+      };
+
+      const ensureSound = (soundId) => {
+        if (sounds[soundId]) return sounds[soundId];
+
+        const audio = new Audio();
+        audio.preload = 'auto';
+        audio.src = soundFiles[soundId];
+        audio.addEventListener('canplaythrough', () => { soundAvailability[soundId] = true; }, { once: true });
+        audio.addEventListener('error', () => { soundAvailability[soundId] = false; }, { once: true });
+        sounds[soundId] = audio;
+        return audio;
+      };
+
+      const playSound = (soundId) => {
+        const audio = ensureSound(soundId);
+        if (audio && soundAvailability[soundId] !== false) {
+          audio.currentTime = 0;
+          audio.play().catch(() => playTone(soundId));
+          return;
+        }
+        playTone(soundId);
+      };
+
+      // Sound button handlers (touchstart for no delay on mobile)
+      document.querySelectorAll('.sound-btn').forEach(btn => {
+        const handler = (e) => {
+          e.preventDefault();
+          const soundId = btn.dataset.sound;
+          playSound(soundId);
+        };
+        btn.addEventListener('touchstart', handler, { passive: false });
+        btn.addEventListener('click', handler);
+      });
+
+      // ==========================================
+      // STATUS BANNER
+      // ==========================================
+      const banner = document.getElementById('status-banner');
+      const trackingBadge = document.getElementById('tracking-badge');
+      const cameraPreview = document.getElementById('camera-preview');
+      const trackingOverlay = document.getElementById('tracking-overlay');
+      const setBanner = (html, autoHideMs = 0) => {
+        banner.innerHTML = html;
+        banner.style.display = 'block';
+        if (autoHideMs > 0) {
+          setTimeout(() => (banner.style.display = 'none'), autoHideMs);
+        }
+      };
+
+      let vrmReady = false;
+      let animReady = false;
+      let fallbackCameraStream = null;
+      const updateLoadingBanner = () => {
+        if (!vrmReady || !animReady) {
+          setBanner('⏳ Cargando modelo y animaciones...');
+        } else {
+          setBanner('✅ Listo — Tocá el personaje para que salte', 3000);
+        }
+      };
+      window._setVrmReady = () => { vrmReady = true; updateLoadingBanner(); };
+      window._setAnimReady = () => { animReady = true; updateLoadingBanner(); };
+      updateLoadingBanner();
+
+      window.DEFAULT_LOCAL_VRM = '../snoo4cami.vrm';
+
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      const startFallbackCameraFeed = async () => {
+        if (fallbackCameraStream || !window.isSecureContext) return;
+
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false
+          });
+          fallbackCameraStream = stream;
+          cameraPreview.srcObject = stream;
+          cameraPreview.style.display = 'block';
+          trackingOverlay.style.display = 'block';
+          trackingBadge.textContent = 'Camera helper: webcam fullscreen';
+          await new Promise((resolve) => { cameraPreview.onloadeddata = resolve; });
+          TrackingHelpers.drawCameraGuide(trackingOverlay, 'Camera fallback activo');
+        } catch (error) {
+          trackingBadge.textContent = 'Camera helper: cámara bloqueada';
+          console.warn('Fallback camera failed:', error);
+        }
+      };
+
+      const disableXrRuntime = (message, autoHideMs = 0) => {
+        const scene = document.querySelector('a-scene');
+        const character = document.getElementById('character-vrm');
+        if (scene) {
+          if (scene.hasAttribute('xrweb')) scene.removeAttribute('xrweb');
+          if (scene.hasAttribute('xrextras-gesture-detector')) scene.removeAttribute('xrextras-gesture-detector');
+        }
+        if (character) {
+          character.removeAttribute('xrextras-pinch-scale');
+          character.removeAttribute('xrextras-two-finger-rotate');
+        }
+        startFallbackCameraFeed();
+        if (message) setBanner(message, autoHideMs);
+      };
+
+      // XR loaded event
+      window.addEventListener('xrloaded', () => {
+        if (isMobile) {
+          trackingBadge.textContent = 'Camera helper: XR cámara activa';
+          setBanner('✅ MÓVIL — Webcam + SLAM activo', 4000);
+        } else {
+          trackingBadge.textContent = 'Camera helper: preview desktop';
+          setBanner('✅ XR8 cargado · Desktop: preview simulado · Para AR real: abrí en móvil via HTTPS', 8000);
+        }
+      });
+
+      // Desktop: disable xrweb when not on mobile
+      document.addEventListener('DOMContentLoaded', () => {
+        const scene = document.querySelector('a-scene');
+        if (!scene) return;
+
+        window.xrEngineLoad.then((xrAvailable) => {
+          if (!xrAvailable) {
+            disableXrRuntime('⚠️ Falta page1-ar-slam/xr-standalone/. Demo 1 corre en preview 3D local.', 8000);
+            return;
+          }
+
+          if (!window.isSecureContext) {
+            trackingBadge.textContent = 'Camera helper: requiere contexto seguro';
+            disableXrRuntime('⚠️ WebXR y cámara requieren https:// o http://localhost.', 8000);
+            return;
+          }
+
+          if (!isMobile) {
+            const waitForAssets = () => {
+              if (vrmReady && animReady) {
+                if (scene.hasAttribute('xrweb')) scene.removeAttribute('xrweb');
+              } else {
+                setTimeout(waitForAssets, 300);
+              }
+            };
+            waitForAssets();
+            setBanner('✅ Preview desktop listo. Para AR real: abrí en móvil via HTTPS.', 8000);
+          }
+        });
+
+        scene.addEventListener('camerastatuschange', (e) => {
+          if (e.detail.status === 'hasVideo') setBanner('✅ WEBCAM + SLAM TRACKING', 3000);
+          if (e.detail.status === 'failed') disableXrRuntime('⚠️ Cámara no disponible. Se mantiene el preview 3D.', 6000);
+        });
+      });
+    </script>
+
+    <!-- ==========================================
+         MIXAMO RIG MAP (Mixamo bone names → VRM humanoid bone names)
+         ========================================== -->
+    <script>
+      const MIXAMO_RIG_MAP = {
+        Hips: 'hips', Spine: 'spine', Spine1: 'chest', Spine2: 'upperChest',
+        Neck: 'neck', Head: 'head',
+        LeftShoulder: 'leftShoulder', LeftArm: 'leftUpperArm', LeftForeArm: 'leftLowerArm', LeftHand: 'leftHand',
+        LeftHandThumb1: 'leftThumbMetacarpal', LeftHandThumb2: 'leftThumbProximal', LeftHandThumb3: 'leftThumbDistal',
+        LeftHandIndex1: 'leftIndexProximal', LeftHandIndex2: 'leftIndexIntermediate', LeftHandIndex3: 'leftIndexDistal',
+        LeftHandMiddle1: 'leftMiddleProximal', LeftHandMiddle2: 'leftMiddleIntermediate', LeftHandMiddle3: 'leftMiddleDistal',
+        LeftHandRing1: 'leftRingProximal', LeftHandRing2: 'leftRingIntermediate', LeftHandRing3: 'leftRingDistal',
+        LeftHandPinky1: 'leftLittleProximal', LeftHandPinky2: 'leftLittleIntermediate', LeftHandPinky3: 'leftLittleDistal',
+        RightShoulder: 'rightShoulder', RightArm: 'rightUpperArm', RightForeArm: 'rightLowerArm', RightHand: 'rightHand',
+        RightHandThumb1: 'rightThumbMetacarpal', RightHandThumb2: 'rightThumbProximal', RightHandThumb3: 'rightThumbDistal',
+        RightHandIndex1: 'rightIndexProximal', RightHandIndex2: 'rightIndexIntermediate', RightHandIndex3: 'rightIndexDistal',
+        RightHandMiddle1: 'rightMiddleProximal', RightHandMiddle2: 'rightMiddleIntermediate', RightHandMiddle3: 'rightMiddleDistal',
+        RightHandRing1: 'rightRingProximal', RightHandRing2: 'rightRingIntermediate', RightHandRing3: 'rightRingDistal',
+        RightHandPinky1: 'rightLittleProximal', RightHandPinky2: 'rightLittleIntermediate', RightHandPinky3: 'rightLittleDistal',
+        LeftUpLeg: 'leftUpperLeg', LeftLeg: 'leftLowerLeg', LeftFoot: 'leftFoot', LeftToeBase: 'leftToes',
+        RightUpLeg: 'rightUpperLeg', RightLeg: 'rightLowerLeg', RightFoot: 'rightFoot', RightToeBase: 'rightToes',
+        // Prefixed variants
+        mixamorigHips: 'hips', mixamorigSpine: 'spine', mixamorigSpine1: 'chest', mixamorigSpine2: 'upperChest',
+        mixamorigNeck: 'neck', mixamorigHead: 'head',
+        mixamorigLeftShoulder: 'leftShoulder', mixamorigLeftArm: 'leftUpperArm', mixamorigLeftForeArm: 'leftLowerArm', mixamorigLeftHand: 'leftHand',
+        mixamorigLeftHandThumb1: 'leftThumbMetacarpal', mixamorigLeftHandThumb2: 'leftThumbProximal', mixamorigLeftHandThumb3: 'leftThumbDistal',
+        mixamorigLeftHandIndex1: 'leftIndexProximal', mixamorigLeftHandIndex2: 'leftIndexIntermediate', mixamorigLeftHandIndex3: 'leftIndexDistal',
+        mixamorigLeftHandMiddle1: 'leftMiddleProximal', mixamorigLeftHandMiddle2: 'leftMiddleIntermediate', mixamorigLeftHandMiddle3: 'leftMiddleDistal',
+        mixamorigLeftHandRing1: 'leftRingProximal', mixamorigLeftHandRing2: 'leftRingIntermediate', mixamorigLeftHandRing3: 'leftRingDistal',
+        mixamorigLeftHandPinky1: 'leftLittleProximal', mixamorigLeftHandPinky2: 'leftLittleIntermediate', mixamorigLeftHandPinky3: 'leftLittleDistal',
+        mixamorigRightShoulder: 'rightShoulder', mixamorigRightArm: 'rightUpperArm', mixamorigRightForeArm: 'rightLowerArm', mixamorigRightHand: 'rightHand',
+        mixamorigRightHandThumb1: 'rightThumbMetacarpal', mixamorigRightHandThumb2: 'rightThumbProximal', mixamorigRightHandThumb3: 'rightThumbDistal',
+        mixamorigRightHandIndex1: 'rightIndexProximal', mixamorigRightHandIndex2: 'rightIndexIntermediate', mixamorigRightHandIndex3: 'rightIndexDistal',
+        mixamorigRightHandMiddle1: 'rightMiddleProximal', mixamorigRightHandMiddle2: 'rightMiddleIntermediate', mixamorigRightHandMiddle3: 'rightMiddleDistal',
+        mixamorigRightHandRing1: 'rightRingProximal', mixamorigRightHandRing2: 'rightRingIntermediate', mixamorigRightHandRing3: 'rightRingDistal',
+        mixamorigRightHandPinky1: 'rightLittleProximal', mixamorigRightHandPinky2: 'rightLittleIntermediate', mixamorigRightHandPinky3: 'rightLittleDistal',
+        mixamorigLeftUpLeg: 'leftUpperLeg', mixamorigLeftLeg: 'leftLowerLeg', mixamorigLeftFoot: 'leftFoot', mixamorigLeftToeBase: 'leftToes',
+        mixamorigRightUpLeg: 'rightUpperLeg', mixamorigRightLeg: 'rightLowerLeg', mixamorigRightFoot: 'rightFoot', mixamorigRightToeBase: 'rightToes'
+      };
+
+      const getThreeLoader = (name) => THREE?.[name] || window.AFRAME?.THREE?.[name] || window[name];
+    </script>
+
+    <!-- ==========================================
+         VRM CHARACTER COMPONENT (with idle + jump)
+         ========================================== -->
+    <script>
+      AFRAME.registerComponent('vrm-character', {
+        schema: {
+          model:     { type: 'string' },
+          idle:      { type: 'string' },   // idle animation FBX
+          jump:      { type: 'string' },   // jump animation FBX
+          speed:     { type: 'number', default: 0.8 }
+        },
+        init() {
+          this.vrm = null;
+          this.mixer = null;
+          this.idleAction = null;
+          this.jumpAction = null;
+          this.isJumping = false;
+          this._modelFallbackTried = false;
+          this._loadVRM();
+        },
+        tick(time, delta) {
+          stats.begin();
+          const dt = delta / 1000;
+          if (this.mixer) this.mixer.update(dt);
+          if (this.vrm) this.vrm.update(dt);
+          stats.end();
+        },
+        async _loadVRM(modelPath = this.data.model) {
+          if (!modelPath) return;
+
+          let GLTFLoaderCtor = getThreeLoader('GLTFLoader');
+          if (!GLTFLoaderCtor && window.gltfLoaderReady) {
+            try {
+              await window.gltfLoaderReady;
+              GLTFLoaderCtor = getThreeLoader('GLTFLoader');
+            } catch (error) {
+              console.error('GLTFLoader not available:', error);
+              return;
+            }
+          }
+          if (!GLTFLoaderCtor) { console.error('GLTFLoader not available'); return; }
+          
+          const loader = new GLTFLoaderCtor();
+          loader.register((parser) => new THREE.VRMLoaderPlugin(parser));
+
+          loader.load(encodeURI(modelPath), (gltf) => {
+            const vrm = gltf.userData.vrm;
+            if (!vrm) { console.error('VRM not found in GLTF'); return; }
+
+            if (THREE.VRMUtils?.removeUnnecessaryJoints) THREE.VRMUtils.removeUnnecessaryJoints(vrm.scene);
+            if (THREE.VRMUtils?.rotateVRM0) THREE.VRMUtils.rotateVRM0(vrm);
+
+            this.vrm = vrm;
+            vrm.scene.traverse((obj) => { obj.frustumCulled = false; });
+            vrm.scene.rotation.y = Math.PI;
+            this.el.object3D.add(vrm.scene);
+
+            if (window._setVrmReady) window._setVrmReady();
+            console.log('✅ VRM loaded');
+
+            // Load both animations
+            this._loadAnimations();
+          }, undefined, (err) => {
+            if (!this._modelFallbackTried && window.DEFAULT_LOCAL_VRM && modelPath !== window.DEFAULT_LOCAL_VRM) {
+              this._modelFallbackTried = true;
+              console.warn(`VRM not found at ${modelPath}; falling back to ${window.DEFAULT_LOCAL_VRM}`);
+              this._loadVRM(window.DEFAULT_LOCAL_VRM);
+              return;
+            }
+
+            console.error('VRM load error:', err);
+          });
+        },
+
+        async _loadAnimations() {
+          if (!this.vrm) return;
+          this.vrm.humanoid?.resetNormalizedPose();
+
+          let FBXLoaderCtor = getThreeLoader('FBXLoader');
+          if (!FBXLoaderCtor && window.fbxLoaderReady) {
+            try { await window.fbxLoaderReady; FBXLoaderCtor = getThreeLoader('FBXLoader'); }
+            catch(e) { console.error('FBXLoader not available:', e); return; }
+          }
+          if (!FBXLoaderCtor) { console.error('FBXLoader not available'); return; }
+
+          this.mixer = new THREE.AnimationMixer(this.vrm.scene);
+
+          // Listen for animation finished to return to idle
+          this.mixer.addEventListener('finished', (e) => {
+            if (this.isJumping) {
+              this.isJumping = false;
+              if (this.idleAction) {
+                this.idleAction.reset().setLoop(THREE.LoopRepeat, Infinity).play();
+              }
+            }
+          });
+
+          const fbxLoader = new FBXLoaderCtor();
+
+          // Load idle animation
+          if (this.data.idle) {
+            fbxLoader.load(encodeURI(this.data.idle), (fbx) => {
+              const clip = this._convertMixamoAnimation(fbx);
+              if (clip) {
+                clip.name = 'idle';
+                this.idleAction = this.mixer.clipAction(clip);
+                this.idleAction.setLoop(THREE.LoopRepeat, Infinity);
+                this.idleAction.timeScale = this.data.speed;
+                this.idleAction.play();
+                console.log('✅ Idle animation loaded');
+              }
+              if (window._setAnimReady) window._setAnimReady();
+            }, undefined, (err) => {
+              console.error('Idle animation load error:', err);
+              if (window._setAnimReady) window._setAnimReady();
+            });
+          }
+
+          // Load jump animation
+          if (this.data.jump) {
+            fbxLoader.load(encodeURI(this.data.jump), (fbx) => {
+              const clip = this._convertMixamoAnimation(fbx);
+              if (clip) {
+                clip.name = 'jump';
+                this.jumpAction = this.mixer.clipAction(clip);
+                this.jumpAction.setLoop(THREE.LoopOnce, 1);
+                this.jumpAction.clampWhenFinished = true;
+                this.jumpAction.timeScale = this.data.speed;
+                console.log('✅ Jump animation loaded');
+              }
+            }, undefined, (err) => console.error('Jump animation load error:', err));
+          }
+
+          // Setup tap-to-jump on the character entity
+          this.el.addEventListener('click', () => this.triggerJump());
+        },
+
+        triggerJump() {
+          if (this.isJumping) return;
+          if (!this.jumpAction) {
+            const currentPosition = this.el.getAttribute('position');
+            if (!currentPosition) return;
+
+            this.isJumping = true;
+            const peakY = Number(currentPosition.y) + 0.35;
+            this.el.setAttribute('animation__jumpUp', {
+              property: 'position',
+              to: `${currentPosition.x} ${peakY} ${currentPosition.z}`,
+              dur: 180,
+              easing: 'easeOutQuad'
+            });
+            this.el.setAttribute('animation__jumpDown', {
+              property: 'position',
+              to: `${currentPosition.x} ${currentPosition.y} ${currentPosition.z}`,
+              dur: 220,
+              delay: 180,
+              easing: 'easeInQuad'
+            });
+            setTimeout(() => { this.isJumping = false; }, 420);
+            console.log('🦘 Jump fallback');
+            return;
+          }
+
+          this.isJumping = true;
+
+          // Stop idle
+          if (this.idleAction) this.idleAction.fadeOut(0.15);
+
+          // Play jump once
+          this.jumpAction.reset().fadeIn(0.15).play();
+          console.log('🦘 Jump!');
+        },
+
+        _convertMixamoAnimation(fbx) {
+          const clip = THREE.AnimationClip.findByName(fbx.animations, 'mixamo.com') || fbx.animations[0];
+          if (!clip) return null;
+
+          const tracks = [];
+          const restRotationInverse = new THREE.Quaternion();
+          const parentRestWorldRotation = new THREE.Quaternion();
+          const quatTemp = new THREE.Quaternion();
+          const vec3Temp = new THREE.Vector3();
+
+          const hipsNode = fbx.getObjectByName('mixamorigHips') || fbx.getObjectByName('mixamorig:Hips');
+          const motionHipsHeight = hipsNode ? hipsNode.position.y : null;
+          const vrmHipsY = this.vrm.humanoid?.getNormalizedBoneNode('hips')?.getWorldPosition(vec3Temp).y;
+          const vrmRootY = this.vrm.scene.getWorldPosition(vec3Temp).y;
+          const vrmHipsHeight = Math.abs(vrmHipsY - vrmRootY);
+          const hipsPositionScale = motionHipsHeight ? (vrmHipsHeight / motionHipsHeight) : 1;
+
+          clip.tracks.forEach((track) => {
+            const trackSplitted = track.name.split('.');
+            const mixamoRigName = trackSplitted[0];
+            const rigName = mixamoRigName.split('|').pop();
+            const cleanedRigName = rigName.replace(/^mixamorig:/, '').replace(/^mixamorig_/, '').replace(/^mixamorig/, '');
+            const normalizedRigName = rigName.replace('mixamorig:', 'mixamorig');
+            const rigCandidates = [rigName, mixamoRigName, normalizedRigName, cleanedRigName, `mixamorig${cleanedRigName}`, `mixamorig:${cleanedRigName}`];
+            const vrmBoneName = rigCandidates.map((n) => MIXAMO_RIG_MAP[n]).find(Boolean);
+            const vrmNodeName = this.vrm.humanoid?.getNormalizedBoneNode(vrmBoneName)?.name;
+            const mixamoRigNode = rigCandidates.map((n) => fbx.getObjectByName(n)).find(Boolean);
+
+            if (!vrmNodeName || !mixamoRigNode) return;
+
+            const propertyName = trackSplitted[1];
+            mixamoRigNode.getWorldQuaternion(restRotationInverse).invert();
+            if (mixamoRigNode.parent) mixamoRigNode.parent.getWorldQuaternion(parentRestWorldRotation);
+            else parentRestWorldRotation.identity();
+
+            if (track.ValueTypeName === 'quaternion') {
+              for (let i = 0; i < track.values.length; i += 4) {
+                const fq = track.values.slice(i, i + 4);
+                quatTemp.fromArray(fq).premultiply(parentRestWorldRotation).multiply(restRotationInverse);
+                quatTemp.toArray(fq);
+                fq.forEach((v, idx) => { track.values[idx + i] = v; });
+              }
+              tracks.push(new THREE.QuaternionKeyframeTrack(
+                `${vrmNodeName}.${propertyName}`, track.times,
+                track.values.map((v, i) => this.vrm.meta?.metaVersion === '0' && i % 2 === 0 ? -v : v)
+              ));
+            } else if (track.ValueTypeName === 'vector') {
+              const values = track.values.map((v, i) =>
+                (this.vrm.meta?.metaVersion === '0' && i % 3 !== 1 ? -v : v) * hipsPositionScale
+              );
+              tracks.push(new THREE.VectorKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times, values));
+            }
+          });
+
+          return new THREE.AnimationClip('vrmAnimation', clip.duration, tracks);
+        }
+      });
+    </script>
+
+    <!-- ==========================================
+         TAP-TO-PLACE (move character to ground tap)
+         ========================================== -->
+    <script>
+      AFRAME.registerComponent('tap-place', {
+        init() {
+          const ground = document.getElementById('ground');
+          const snoo = document.getElementById('character-vrm');
+          if (!ground || !snoo) return;
+
+          ground.addEventListener('click', (event) => {
+            if (!event.detail || !event.detail.intersection) return;
+            const touchPoint = event.detail.intersection.point;
+            const currentPos = snoo.getAttribute('position');
+            const currentY = currentPos ? currentPos.y : 0;
+            snoo.setAttribute('animation', {
+              property: 'position',
+              to: `${touchPoint.x} ${currentY} ${touchPoint.z}`,
+              easing: 'easeOutCubic',
+              dur: 600,
+            });
+          });
+        },
+      });
+    </script>
+
+    <!-- ==========================================
+         A-FRAME SCENE
+         ========================================== -->
+    <a-scene
+      tap-place
+      xrextras-gesture-detector
+      xrweb="disableWorldTracking: false; allowedDevices: any"
+      vr-mode-ui="enabled: false"
+      renderer="colorManagement: true"
+      loading-screen="enabled: false">
+
+      <!-- Lights -->
+      <a-entity light="type: ambient; intensity: 0.8"></a-entity>
+      <a-entity light="type: directional; intensity: 0.6" position="-1 2 1"></a-entity>
+
+      <!-- Ground plane for tap-to-place -->
+      <a-box
+        id="ground"
+        class="cantap"
+        scale="1000 1 1000"
+        position="0 -1 0"
+        material="color: #bb0000; transparent: true; opacity: 0"
+        shadow>
+      </a-box>
+
+      <!-- VRM Character with idle + jump animations -->
+      <!--
+        ⚠️ USUARIO: Reemplazá las rutas de los assets:
+        - model: ruta a tu archivo .vrm
+        - idle: ruta a tu animación idle .fbx (Mixamo)
+        - jump: ruta a tu animación de salto .fbx (Mixamo)
+      -->
+      <a-entity
+        id="character-vrm"
+        class="cantap"
+        position="0 -1 -2"
+        scale="0.9 0.9 0.9"
+        vrm-character="model: ./assets/character.vrm; idle: ./assets/idle.fbx; jump: ./assets/jump.fbx; speed: 0.8"
+        xrextras-pinch-scale="min: 0.3; max: 2.0"
+        xrextras-two-finger-rotate>
+      </a-entity>
+
+      <a-camera
+        id="camera"
+        position="0 1.2 0"
+        raycaster="objects: .cantap"
+        cursor="fuse: false; rayOrigin: mouse;">
+      </a-camera>
+    </a-scene>
+
+  </body>
+</html>

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>XR Performance Test Suite</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #0a0a0f;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 8px;
+      color: #fff;
+      text-align: center;
+    }
+    .subtitle {
+      font-size: 0.85rem;
+      color: #888;
+      margin-bottom: 40px;
+      text-align: center;
+    }
+    .demos {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      width: 100%;
+      max-width: 400px;
+    }
+    a.demo-link {
+      display: block;
+      padding: 20px 24px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      text-decoration: none;
+      color: #fff;
+      transition: all 0.2s ease;
+    }
+    a.demo-link:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: rgba(255,255,255,0.2);
+      transform: translateY(-2px);
+    }
+    .demo-link .emoji { font-size: 1.5rem; margin-right: 12px; }
+    .demo-link .title { font-weight: 600; font-size: 1rem; }
+    .demo-link .desc {
+      display: block;
+      font-size: 0.75rem;
+      color: #888;
+      margin-top: 6px;
+      padding-left: 36px;
+    }
+    .footer {
+      margin-top: 40px;
+      font-size: 0.7rem;
+      color: #555;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h1>🧪 XR Performance Test Suite</h1>
+  <p class="subtitle">3 demos aisladas para medir rendimiento en WebViews móviles</p>
+  
+  <div class="demos">
+    <a href="page1-ar-slam/" class="demo-link" id="demo-ar-slam">
+      <span class="emoji">📱</span>
+      <span class="title">Página 1: AR SLAM + Interacción</span>
+      <span class="desc">8th Wall SLAM · Tap para saltar · 3 botones de sonido</span>
+    </a>
+    
+    <a href="page2-vrm-bodytrack/" class="demo-link" id="demo-body-track">
+      <span class="emoji">🧍</span>
+      <span class="title">Página 2: VRM Body Tracking</span>
+      <span class="desc">MediaPipe Pose Lite · VRM con @pixiv/three-vrm</span>
+    </a>
+    
+    <a href="page3-face-expressions/" class="demo-link" id="demo-face-track">
+      <span class="emoji">🎭</span>
+      <span class="title">Página 3: Face Expressions</span>
+      <span class="desc">MediaPipe Face Landmarker · 52 blendshapes ARKit</span>
+    </a>
+  </div>
+
+  <p class="footer">Todas las demos incluyen un overlay local de FPS + MS en la esquina superior izquierda</p>
+</body>
+</html>

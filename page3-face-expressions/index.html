@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Demo 3: Face Tracking + VRM (Performance Test)</title>
+
+  <script>
+    (function () {
+      const { pathname, search, hash } = window.location;
+      const lastSegment = pathname.split('/').pop();
+      if (lastSegment && !lastSegment.includes('.') && !pathname.endsWith('/')) {
+        window.location.replace(`${pathname}/${search}${hash}`);
+      }
+    })();
+  </script>
+
+  <script src="../shared/fps-overlay.js"></script>
+  <script src="../shared/tracking-helpers.js"></script>
+  <link rel="stylesheet" href="../shared/fps-overlay.css">
+
+  <!-- Import maps for Three.js + VRM -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/",
+        "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@2.1.0/lib/three-vrm.module.min.js"
+      }
+    }
+  </script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #111;
+    }
+    body {
+      position: relative;
+      background: #000;
+    }
+    #three-canvas {
+      display: block;
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      pointer-events: none;
+    }
+    #camera-preview {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      object-fit: cover;
+      transform: scaleX(-1);
+      background: #050505;
+    }
+    #tracking-overlay {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      pointer-events: none;
+    }
+    #status {
+      position: fixed;
+      top: 85px;
+      left: 10px;
+      right: 10px;
+      background: rgba(0,0,0,0.85);
+      color: #0f0;
+      font-family: monospace;
+      font-size: 12px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      z-index: 100;
+      pointer-events: none;
+    }
+    #face-debug {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.8);
+      color: #0f0;
+      font-family: monospace;
+      font-size: 10px;
+      padding: 8px;
+      border-radius: 6px;
+      z-index: 101;
+      min-width: 200px;
+      max-height: 220px;
+      overflow-y: auto;
+      pointer-events: none;
+    }
+    #tracking-badge {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 101;
+      padding: 8px 12px;
+      background: rgba(0,0,0,0.7);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 999px;
+      font-family: monospace;
+      font-size: 11px;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="stats-container"></div>
+  <div id="status">⏳ Inicializando...</div>
+  <video id="camera-preview" autoplay playsinline muted></video>
+  <canvas id="tracking-overlay"></canvas>
+  <canvas id="three-canvas"></canvas>
+  <div id="tracking-badge">Face helper: esperando cámara</div>
+  <div id="face-debug">Face: esperando...</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+    import { FilesetResolver, FaceLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.mjs';
+
+    // ==========================================
+    // STATS.JS SETUP
+    // ==========================================
+    const stats = window.createStatsOverlay();
+    stats.showPanel(0);
+    document.getElementById('stats-container').appendChild(stats.dom);
+
+    const statusEl = document.getElementById('status');
+    const debugEl = document.getElementById('face-debug');
+    const trackingBadgeEl = document.getElementById('tracking-badge');
+    const trackingOverlayEl = document.getElementById('tracking-overlay');
+    const setStatus = (msg, autoHide = 0) => {
+      statusEl.textContent = msg;
+      statusEl.style.display = 'block';
+      if (autoHide > 0) setTimeout(() => statusEl.style.display = 'none', autoHide);
+    };
+
+    // ==========================================
+    // THREE.JS SCENE SETUP (Minimal)
+    // ==========================================
+    const canvas = document.getElementById('three-canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.setClearAlpha(0);
+
+    const scene = new THREE.Scene();
+    scene.background = null;
+
+    const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 1.0, 3.0);
+    camera.lookAt(0, 1.0, 0);
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const frontLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    frontLight.position.set(0, 2, 3);
+    scene.add(frontLight);
+    const fillLight = new THREE.DirectionalLight(0x8888ff, 0.3);
+    fillLight.position.set(-2, 1, 1);
+    scene.add(fillLight);
+
+    // Grid
+    const grid = new THREE.GridHelper(6, 12, 0x333355, 0x222244);
+    scene.add(grid);
+
+    // ==========================================
+    // VRM LOADING (STATIC — just displayed, not driven by face tracking)
+    // ==========================================
+    let currentVrm = null;
+
+    setStatus('⏳ Cargando modelo VRM...');
+    const gltfLoader = new GLTFLoader();
+    gltfLoader.register((parser) => new VRMLoaderPlugin(parser));
+
+    const VRM_PATH = './assets/character.vrm';
+
+    try {
+      const gltf = await new Promise((resolve, reject) => {
+        gltfLoader.load(VRM_PATH, resolve, undefined, reject);
+      });
+
+      const vrm = gltf.userData.vrm;
+      if (!vrm) throw new Error('VRM not found in GLTF');
+
+      VRMUtils.removeUnnecessaryJoints(vrm.scene);
+      vrm.scene.traverse((obj) => { obj.frustumCulled = false; });
+      scene.add(vrm.scene);
+      currentVrm = vrm;
+      console.log('✅ VRM loaded (static display)');
+      setStatus('✅ VRM cargado (estático). Inicializando cámara...');
+    } catch (err) {
+      console.error('VRM load error:', err);
+      setStatus(`❌ Error cargando VRM: ${err.message}`);
+    }
+
+    // ==========================================
+    // CAMERA SETUP
+    // ==========================================
+    const videoEl = document.getElementById('camera-preview');
+    let cameraReady = false;
+
+    if (!window.isSecureContext) {
+      setStatus('⚠️ La cámara solo funciona en https:// o http://localhost');
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        });
+        videoEl.srcObject = stream;
+        await new Promise((resolve) => { videoEl.onloadeddata = resolve; });
+        cameraReady = true;
+        console.log('✅ Camera ready');
+        trackingBadgeEl.textContent = 'Face helper: cámara activa';
+        TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Face helper activo');
+        setStatus('✅ Cámara lista. Inicializando MediaPipe...');
+      } catch (err) {
+        console.error('Camera error:', err);
+        trackingBadgeEl.textContent = 'Face helper: cámara bloqueada';
+        setStatus(`❌ Error cámara: ${err.message}`);
+      }
+    }
+
+    // ==========================================
+    // MEDIAPIPE FACE LANDMARKER — runs independently, NOT connected to VRM
+    // ==========================================
+    let faceLandmarker = null;
+
+    if (cameraReady) {
+      try {
+        setStatus('⏳ Cargando MediaPipe Face Landmarker...');
+        const vision = await FilesetResolver.forVisionTasks(
+          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
+        );
+
+        faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task',
+            delegate: 'GPU'
+          },
+          runningMode: 'VIDEO',
+          numFaces: 1,
+          outputFaceBlendshapes: true,
+          outputFacialTransformationMatrixes: true
+        });
+
+        console.log('✅ FaceLandmarker ready');
+        trackingBadgeEl.textContent = 'Face helper: trackeando';
+        setStatus('✅ Todo listo — VRM estático + Face Landmarker corriendo en paralelo', 5000);
+      } catch (err) {
+        console.error('MediaPipe init error:', err);
+        trackingBadgeEl.textContent = 'Face helper: error MediaPipe';
+        setStatus(`❌ Error MediaPipe: ${err.message}`);
+      }
+    }
+
+    // ==========================================
+    // Key blendshapes to show in debug overlay
+    // ==========================================
+    const DEBUG_BLENDSHAPES = [
+      'jawOpen', 'eyeBlinkLeft', 'eyeBlinkRight',
+      'mouthSmileLeft', 'mouthSmileRight',
+      'browInnerUp', 'browDownLeft', 'browDownRight',
+      'cheekPuff', 'noseSneerLeft'
+    ];
+
+    // ==========================================
+    // RENDER LOOP — VRM renders, Face Landmarker runs, but NOT connected
+    // ==========================================
+    let lastVideoTime = -1;
+    let debugCounter = 0;
+    let faceDetected = false;
+
+    function animate() {
+      requestAnimationFrame(animate);
+      stats.begin();
+
+      // Run face detection (just to measure FPS impact — NOT applying to VRM)
+      if (faceLandmarker && cameraReady && videoEl.readyState >= 2) {
+        const nowMs = performance.now();
+        if (videoEl.currentTime !== lastVideoTime) {
+          lastVideoTime = videoEl.currentTime;
+          try {
+            const result = faceLandmarker.detectForVideo(videoEl, nowMs);
+
+            // Just log detection results for debug
+            if (result.faceBlendshapes && result.faceBlendshapes.length > 0) {
+              faceDetected = true;
+              debugCounter++;
+              const mesh = result.faceLandmarks?.[0];
+              if (mesh) {
+                TrackingHelpers.drawFace(trackingOverlayEl, videoEl, mesh, { mirrored: true });
+              }
+              if (debugCounter % 10 === 0) {
+                const shapes = result.faceBlendshapes[0].categories;
+                let html = '<b>Face DETECTED ✅</b><br>';
+                html += `Blendshapes: ${shapes.length}<br>`;
+                html += '---<br>';
+                for (const shape of shapes) {
+                  if (DEBUG_BLENDSHAPES.includes(shape.categoryName)) {
+                    const bar = '█'.repeat(Math.round(shape.score * 10));
+                    const pad = '░'.repeat(10 - Math.round(shape.score * 10));
+                    html += `${shape.categoryName}: ${bar}${pad} ${shape.score.toFixed(2)}<br>`;
+                  }
+                }
+                debugEl.innerHTML = html;
+              }
+            } else {
+              if (faceDetected) {
+                debugEl.innerHTML = 'Face: buscando...';
+                faceDetected = false;
+              }
+              TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Face helper sin landmarks');
+            }
+          } catch (err) {
+            // Silently handle detection errors
+          }
+        }
+      }
+
+      // Update VRM (tick for internal updates, but no expressions applied)
+      if (currentVrm) {
+        currentVrm.update(1 / 60);
+      }
+
+      renderer.render(scene, camera);
+      stats.end();
+    }
+
+    animate();
+
+    // Handle resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      TrackingHelpers.drawCameraGuide(trackingOverlayEl, cameraReady ? 'Face helper activo' : 'Face helper esperando cámara');
+    });
+
+    TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Face helper esperando cámara');
+  </script>
+</body>
+</html>
