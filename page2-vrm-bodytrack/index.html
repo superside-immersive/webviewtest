@@ -128,6 +128,7 @@
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
     import { FilesetResolver, PoseLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.mjs';
+    import { VrmBodyRetargetLite } from '../shared/vrm-body-retarget-lite.js';
 
     // ==========================================
     // STATS.JS SETUP
@@ -159,9 +160,60 @@
     const scene = new THREE.Scene();
     scene.background = null;
 
-    const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 100);
-    camera.position.set(0, 1.0, 3.0);
-    camera.lookAt(0, 1.0, 0);
+    const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 1.2, 4.0);
+    camera.lookAt(0, 0.9, 0);
+
+    const CAMERA_FRAME_OPTIONS = {
+      distanceMultiplier: 1.35,
+      minimumDistance: 3.8,
+      targetHeightFactor: 0.42,
+      cameraHeightFactor: 0.58,
+    };
+
+    function updateCameraDebugTarget(target) {
+      window.__page2Camera = camera;
+      window.__page2CameraTarget = {
+        x: Number(target.x.toFixed(4)),
+        y: Number(target.y.toFixed(4)),
+        z: Number(target.z.toFixed(4)),
+      };
+    }
+
+    function frameLoadedVrm(vrm) {
+      if (!vrm?.scene) {
+        return;
+      }
+
+      vrm.scene.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(vrm.scene);
+      if (box.isEmpty()) {
+        return;
+      }
+
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const halfFovY = THREE.MathUtils.degToRad(camera.fov * 0.5);
+      const fitHeightDistance = (size.y * 0.5) / Math.tan(halfFovY);
+      const fitWidthDistance = ((size.x / Math.max(camera.aspect, 0.001)) * 0.5) / Math.tan(halfFovY);
+      const distance = Math.max(
+        CAMERA_FRAME_OPTIONS.minimumDistance,
+        Math.max(fitHeightDistance, fitWidthDistance) * CAMERA_FRAME_OPTIONS.distanceMultiplier
+      );
+      const target = new THREE.Vector3(
+        center.x,
+        box.min.y + size.y * CAMERA_FRAME_OPTIONS.targetHeightFactor,
+        center.z,
+      );
+
+      camera.position.set(
+        center.x,
+        box.min.y + size.y * CAMERA_FRAME_OPTIONS.cameraHeightFactor,
+        center.z + distance,
+      );
+      camera.lookAt(target);
+      updateCameraDebugTarget(target);
+    }
 
     // Lights
     scene.add(new THREE.AmbientLight(0xffffff, 0.7));
@@ -174,9 +226,10 @@
     scene.add(grid);
 
     // ==========================================
-    // VRM LOADING (STATIC — just displayed, not driven by tracking)
+    // VRM LOADING
     // ==========================================
     let currentVrm = null;
+    let bodyRetargeter = null;
 
     setStatus('⏳ Cargando modelo VRM...');
     const gltfLoader = new GLTFLoader();
@@ -195,9 +248,16 @@
       VRMUtils.removeUnnecessaryJoints(vrm.scene);
       vrm.scene.traverse((obj) => { obj.frustumCulled = false; });
       scene.add(vrm.scene);
+      frameLoadedVrm(vrm);
       currentVrm = vrm;
-      console.log('✅ VRM loaded (static display)');
-      setStatus('✅ VRM cargado (estático). Inicializando cámara...');
+      bodyRetargeter = new VrmBodyRetargetLite(vrm, {
+        visibilityThreshold: 0.35,
+        presenceThreshold: 0.15,
+        rotationSpeed: 12,
+      });
+      window.__page2Debug = { currentVrm, bodyRetargeter };
+      console.log('✅ VRM loaded (body retargeter ready)');
+      setStatus('✅ VRM cargado. Inicializando cámara...');
     } catch (err) {
       console.error('VRM load error:', err);
       setStatus(`❌ Error cargando VRM: ${err.message}`);
@@ -232,7 +292,7 @@
     }
 
     // ==========================================
-    // MEDIAPIPE POSE LANDMARKER (LITE) — runs independently, NOT connected to VRM
+    // MEDIAPIPE POSE LANDMARKER (LITE)
     // ==========================================
     let poseLandmarker = null;
 
@@ -258,7 +318,7 @@
 
         console.log('✅ PoseLandmarker ready (LITE)');
         trackingBadgeEl.textContent = 'Pose helper: trackeando';
-        setStatus('✅ Todo listo — VRM estático + Pose Lite corriendo en paralelo', 5000);
+        setStatus('✅ Todo listo — Pose Lite + VRM body retarget listo', 5000);
       } catch (err) {
         console.error('MediaPipe init error:', err);
         trackingBadgeEl.textContent = 'Pose helper: error MediaPipe';
@@ -267,57 +327,70 @@
     }
 
     // ==========================================
-    // RENDER LOOP — VRM renders, MediaPipe runs, but they are NOT connected
+    // RENDER LOOP
     // ==========================================
     let lastVideoTime = -1;
     let debugCounter = 0;
     let poseDetected = false;
+    let lastFrameNowMs = performance.now();
 
     function animate() {
       requestAnimationFrame(animate);
       stats.begin();
 
-      // Run pose detection (just to burn GPU/CPU and measure FPS impact)
+      const nowMs = performance.now();
+      const deltaSeconds = Math.min(0.1, Math.max(1 / 240, (nowMs - lastFrameNowMs) / 1000));
+      lastFrameNowMs = nowMs;
+
+      let latestRetargetStats = null;
+
       if (poseLandmarker && cameraReady && videoEl.readyState >= 2) {
-        const nowMs = performance.now();
         if (videoEl.currentTime !== lastVideoTime) {
           lastVideoTime = videoEl.currentTime;
           try {
             const result = poseLandmarker.detectForVideo(videoEl, nowMs);
 
-            // Just log detection results for debug — NOT applying to VRM
             if (result && result.landmarks && result.landmarks.length > 0) {
               const lm = result.landmarks[0];
+              const worldLm = result.worldLandmarks?.[0];
               poseDetected = true;
               debugCounter++;
               TrackingHelpers.drawPose(trackingOverlayEl, videoEl, lm, { mirrored: true });
+              latestRetargetStats = bodyRetargeter?.update(result, deltaSeconds) ?? null;
+              trackingBadgeEl.textContent = worldLm?.length
+                ? 'Pose helper: trackeando 3D'
+                : 'Pose helper: trackeando 2D';
               if (debugCounter % 15 === 0) {
                 const nose = lm[0];
                 const lShoulder = lm[11];
                 const rShoulder = lm[12];
                 debugEl.innerHTML = 
                   `<b>Pose DETECTED ✅</b><br>` +
+                  `Source: ${worldLm?.length ? 'WORLD_3D' : 'NORMALIZED_2D'}<br>` +
                   `Landmarks: ${lm.length}<br>` +
                   `Nose: (${nose.x.toFixed(2)}, ${nose.y.toFixed(2)})<br>` +
                   `L.Shoulder: (${lShoulder.x.toFixed(2)}, ${lShoulder.y.toFixed(2)})<br>` +
                   `R.Shoulder: (${rShoulder.x.toFixed(2)}, ${rShoulder.y.toFixed(2)})`;
               }
             } else {
+              latestRetargetStats = bodyRetargeter?.update(null, deltaSeconds) ?? null;
               if (poseDetected) {
                 debugEl.innerHTML = 'Pose: buscando...';
                 poseDetected = false;
               }
+              trackingBadgeEl.textContent = 'Pose helper: sin landmarks';
               TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Pose helper sin landmarks');
             }
           } catch (err) {
-            // Silently handle detection errors
+            latestRetargetStats = bodyRetargeter?.update(null, deltaSeconds) ?? null;
           }
         }
+      } else {
+        latestRetargetStats = bodyRetargeter?.update(null, deltaSeconds) ?? null;
       }
 
-      // Update VRM (tick for internal updates, but no pose applied)
       if (currentVrm) {
-        currentVrm.update(1 / 60);
+        currentVrm.update(deltaSeconds);
       }
 
       renderer.render(scene, camera);
@@ -330,6 +403,9 @@
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
+      if (currentVrm) {
+        frameLoadedVrm(currentVrm);
+      }
       renderer.setSize(window.innerWidth, window.innerHeight);
       TrackingHelpers.drawCameraGuide(trackingOverlayEl, cameraReady ? 'Pose helper activo' : 'Pose helper esperando cámara');
     });
