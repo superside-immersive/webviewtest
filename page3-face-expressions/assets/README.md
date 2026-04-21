@@ -1,11 +1,11 @@
-# Assets para Página 3: Face Tracking + Expressions
+# Assets for Page 3: Face Tracking + Expressions
 
-La implementación actual de esta demo carga un modelo VRM estático:
+The current implementation of this demo loads a static VRM model:
 
-## Modelo 3D
-- `character.vrm` — Modelo VRM con esqueleto humanoid estándar
+## 3D Model
+- `character.vrm` — VRM model with a standard humanoid skeleton
 
-Importante:
-- Esta página hoy usa `FaceLandmarker` solo para medir carga y mostrar debug.
-- Todavía no aplica blendshapes del tracking al modelo 3D.
-- Si más adelante querés conectar expresiones reales, ahí sí conviene migrar a un GLB con morph targets ARKit.
+Important:
+- This page currently uses `FaceLandmarker` only to measure load and show debug output.
+- It does not yet apply tracking blendshapes to the 3D model.
+- If you later want to connect real expressions, it would make sense to migrate to a GLB with ARKit morph targets.
