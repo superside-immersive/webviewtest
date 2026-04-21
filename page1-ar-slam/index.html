@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>Demo 1: AR SLAM + Interacción</title>
+    <title>Demo 1: AR SLAM + Interaction</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 
     <script>
@@ -241,10 +241,10 @@
     <div id="tracking-badge">Camera helper: XR / fallback</div>
 
     <!-- Status banner -->
-    <div id="status-banner">⏳ Cargando...</div>
+    <div id="status-banner">⏳ Loading...</div>
 
     <!-- Tap hint -->
-    <div id="tap-hint">👆 Tocá el personaje para que salte</div>
+    <div id="tap-hint">👆 Tap the character to make it jump</div>
 
     <!-- Sound buttons -->
     <div id="sound-buttons">
@@ -365,9 +365,9 @@
       let fallbackCameraStream = null;
       const updateLoadingBanner = () => {
         if (!vrmReady || !animReady) {
-          setBanner('⏳ Cargando modelo y animaciones...');
+          setBanner('⏳ Loading model and animations...');
         } else {
-          setBanner('✅ Listo — Tocá el personaje para que salte', 3000);
+          setBanner('✅ Ready — tap the character to make it jump', 3000);
         }
       };
       window._setVrmReady = () => { vrmReady = true; updateLoadingBanner(); };
@@ -391,9 +391,9 @@
           trackingOverlay.style.display = 'block';
           trackingBadge.textContent = 'Camera helper: webcam fullscreen';
           await new Promise((resolve) => { cameraPreview.onloadeddata = resolve; });
-          TrackingHelpers.drawCameraGuide(trackingOverlay, 'Camera fallback activo');
+          TrackingHelpers.drawCameraGuide(trackingOverlay, 'Camera fallback active');
         } catch (error) {
-          trackingBadge.textContent = 'Camera helper: cámara bloqueada';
+          trackingBadge.textContent = 'Camera helper: camera blocked';
           console.warn('Fallback camera failed:', error);
         }
       };
@@ -416,11 +416,11 @@
       // XR loaded event
       window.addEventListener('xrloaded', () => {
         if (isMobile) {
-          trackingBadge.textContent = 'Camera helper: XR cámara activa';
-          setBanner('✅ MÓVIL — Webcam + SLAM activo', 4000);
+          trackingBadge.textContent = 'Camera helper: XR camera active';
+          setBanner('✅ MOBILE — Webcam + SLAM active', 4000);
         } else {
           trackingBadge.textContent = 'Camera helper: preview desktop';
-          setBanner('✅ XR8 cargado · Desktop: preview simulado · Para AR real: abrí en móvil via HTTPS', 8000);
+          setBanner('✅ XR8 loaded · Desktop: simulated preview · For real AR, open on mobile over HTTPS', 8000);
         }
       });
 
@@ -431,13 +431,13 @@
 
         window.xrEngineLoad.then((xrAvailable) => {
           if (!xrAvailable) {
-            disableXrRuntime('⚠️ Falta page1-ar-slam/xr-standalone/. Demo 1 corre en preview 3D local.', 8000);
+            disableXrRuntime('⚠️ Missing page1-ar-slam/xr-standalone/. Demo 1 is running in local 3D preview mode.', 8000);
             return;
           }
 
           if (!window.isSecureContext) {
-            trackingBadge.textContent = 'Camera helper: requiere contexto seguro';
-            disableXrRuntime('⚠️ WebXR y cámara requieren https:// o http://localhost.', 8000);
+            trackingBadge.textContent = 'Camera helper: secure context required';
+            disableXrRuntime('⚠️ WebXR and camera access require https:// or http://localhost.', 8000);
             return;
           }
 
@@ -450,13 +450,13 @@
               }
             };
             waitForAssets();
-            setBanner('✅ Preview desktop listo. Para AR real: abrí en móvil via HTTPS.', 8000);
+            setBanner('✅ Desktop preview ready. For real AR, open on mobile over HTTPS.', 8000);
           }
         });
 
         scene.addEventListener('camerastatuschange', (e) => {
           if (e.detail.status === 'hasVideo') setBanner('✅ WEBCAM + SLAM TRACKING', 3000);
-          if (e.detail.status === 'failed') disableXrRuntime('⚠️ Cámara no disponible. Se mantiene el preview 3D.', 6000);
+          if (e.detail.status === 'failed') disableXrRuntime('⚠️ Camera unavailable. Keeping the 3D preview active.', 6000);
         });
       });
     </script>
@@ -789,10 +789,10 @@
 
       <!-- VRM Character with idle + jump animations -->
       <!--
-        ⚠️ USUARIO: Reemplazá las rutas de los assets:
-        - model: ruta a tu archivo .vrm
-        - idle: ruta a tu animación idle .fbx (Mixamo)
-        - jump: ruta a tu animación de salto .fbx (Mixamo)
+        ⚠️ USER: Replace the asset paths below:
+        - model: path to your .vrm file
+        - idle: path to your idle .fbx animation (Mixamo)
+        - jump: path to your jump .fbx animation (Mixamo)
       -->
       <a-entity
         id="character-vrm"

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
@@ -118,12 +118,12 @@
 <body>
 
   <div id="stats-container"></div>
-  <div id="status">⏳ Inicializando...</div>
+  <div id="status">⏳ Initializing...</div>
   <video id="camera-preview" autoplay playsinline muted></video>
   <canvas id="tracking-overlay"></canvas>
   <canvas id="three-canvas"></canvas>
-  <div id="tracking-badge">Face helper: esperando cámara</div>
-  <div id="face-debug">Face: esperando...</div>
+  <div id="tracking-badge">Face helper: waiting for camera</div>
+  <div id="face-debug">Face: waiting...</div>
 
   <script type="module">
     import * as THREE from 'three';
@@ -183,7 +183,7 @@
     // ==========================================
     let currentVrm = null;
 
-    setStatus('⏳ Cargando modelo VRM...');
+    setStatus('⏳ Loading VRM model...');
     const gltfLoader = new GLTFLoader();
     gltfLoader.register((parser) => new VRMLoaderPlugin(parser));
 
@@ -202,10 +202,10 @@
       scene.add(vrm.scene);
       currentVrm = vrm;
       console.log('✅ VRM loaded (static display)');
-      setStatus('✅ VRM cargado (estático). Inicializando cámara...');
+      setStatus('✅ VRM loaded (static). Initializing camera...');
     } catch (err) {
       console.error('VRM load error:', err);
-      setStatus(`❌ Error cargando VRM: ${err.message}`);
+      setStatus(`❌ Error loading VRM: ${err.message}`);
     }
 
     // ==========================================
@@ -215,7 +215,7 @@
     let cameraReady = false;
 
     if (!window.isSecureContext) {
-      setStatus('⚠️ La cámara solo funciona en https:// o http://localhost');
+      setStatus('⚠️ Camera access only works on https:// or http://localhost');
     } else {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -226,13 +226,13 @@
         await new Promise((resolve) => { videoEl.onloadeddata = resolve; });
         cameraReady = true;
         console.log('✅ Camera ready');
-        trackingBadgeEl.textContent = 'Face helper: cámara activa';
-        TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Face helper activo');
-        setStatus('✅ Cámara lista. Inicializando MediaPipe...');
+        trackingBadgeEl.textContent = 'Face helper: camera active';
+        TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Face helper active');
+        setStatus('✅ Camera ready. Initializing MediaPipe...');
       } catch (err) {
         console.error('Camera error:', err);
-        trackingBadgeEl.textContent = 'Face helper: cámara bloqueada';
-        setStatus(`❌ Error cámara: ${err.message}`);
+        trackingBadgeEl.textContent = 'Face helper: camera blocked';
+        setStatus(`❌ Camera error: ${err.message}`);
       }
     }
 
@@ -243,7 +243,7 @@
 
     if (cameraReady) {
       try {
-        setStatus('⏳ Cargando MediaPipe Face Landmarker...');
+        setStatus('⏳ Loading MediaPipe Face Landmarker...');
         const vision = await FilesetResolver.forVisionTasks(
           'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
         );
@@ -260,12 +260,12 @@
         });
 
         console.log('✅ FaceLandmarker ready');
-        trackingBadgeEl.textContent = 'Face helper: trackeando';
-        setStatus('✅ Todo listo — VRM estático + Face Landmarker corriendo en paralelo', 5000);
+        trackingBadgeEl.textContent = 'Face helper: tracking';
+        setStatus('✅ Everything is ready — static VRM + Face Landmarker running in parallel', 5000);
       } catch (err) {
         console.error('MediaPipe init error:', err);
-        trackingBadgeEl.textContent = 'Face helper: error MediaPipe';
-        setStatus(`❌ Error MediaPipe: ${err.message}`);
+        trackingBadgeEl.textContent = 'Face helper: MediaPipe error';
+        setStatus(`❌ MediaPipe error: ${err.message}`);
       }
     }
 
@@ -322,10 +322,10 @@
               }
             } else {
               if (faceDetected) {
-                debugEl.innerHTML = 'Face: buscando...';
+                debugEl.innerHTML = 'Face: searching...';
                 faceDetected = false;
               }
-              TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Face helper sin landmarks');
+              TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Face helper without landmarks');
             }
           } catch (err) {
             // Silently handle detection errors
@@ -349,10 +349,10 @@
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
-      TrackingHelpers.drawCameraGuide(trackingOverlayEl, cameraReady ? 'Face helper activo' : 'Face helper esperando cámara');
+      TrackingHelpers.drawCameraGuide(trackingOverlayEl, cameraReady ? 'Face helper active' : 'Face helper waiting for camera');
     });
 
-    TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Face helper esperando cámara');
+    TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Face helper waiting for camera');
   </script>
 </body>
 </html>

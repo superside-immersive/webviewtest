@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
@@ -121,12 +121,12 @@
 <body>
 
   <div id="stats-container"></div>
-  <div id="status">⏳ Inicializando...</div>
+  <div id="status">⏳ Initializing...</div>
   <video id="camera-preview" autoplay playsinline webkit-playsinline="true" muted></video>
   <canvas id="tracking-overlay"></canvas>
   <canvas id="three-canvas"></canvas>
-  <div id="tracking-badge">Pose helper | build 2026-04-15a | esperando cámara</div>
-  <div id="pose-debug">Pose: esperando...</div>
+  <div id="tracking-badge">Pose helper | build 2026-04-15a | waiting for camera</div>
+  <div id="pose-debug">Pose: waiting...</div>
 
   <script type="module">
     import * as THREE from 'three';
@@ -165,7 +165,7 @@
       if (autoHide > 0) setTimeout(() => statusEl.style.display = 'none', autoHide);
     };
 
-    setTrackingBadge('esperando cámara');
+    setTrackingBadge('waiting for camera');
 
     // ==========================================
     // THREE.JS SCENE SETUP (Minimal)
@@ -251,7 +251,7 @@
     let currentVrm = null;
     let bodyRetargeter = null;
 
-    setStatus('⏳ Cargando modelo VRM...');
+    setStatus('⏳ Loading VRM model...');
     const gltfLoader = new GLTFLoader();
     gltfLoader.register((parser) => new VRMLoaderPlugin(parser));
 
@@ -277,10 +277,10 @@
       });
       window.__page2Debug = { currentVrm, bodyRetargeter };
       console.log('✅ VRM loaded (body retargeter ready)');
-      setStatus('✅ VRM cargado. Inicializando cámara...');
+      setStatus('✅ VRM loaded. Initializing camera...');
     } catch (err) {
       console.error('VRM load error:', err);
-      setStatus(`❌ Error cargando VRM: ${err.message}`);
+      setStatus(`❌ Error loading VRM: ${err.message}`);
     }
 
     // ==========================================
@@ -290,7 +290,7 @@
     let cameraReady = false;
 
     if (!window.isSecureContext) {
-      setStatus('⚠️ La cámara solo funciona en https:// o http://localhost');
+      setStatus('⚠️ Camera access only works on https:// or http://localhost');
     } else {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -301,13 +301,13 @@
         await new Promise((resolve) => { videoEl.onloadeddata = resolve; });
         cameraReady = true;
         console.log('✅ Camera ready');
-        setTrackingBadge('camara activa');
-        TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Pose helper activo');
-        setStatus('✅ Cámara lista. Inicializando MediaPipe...');
+        setTrackingBadge('camera active');
+        TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Pose helper active');
+        setStatus('✅ Camera ready. Initializing MediaPipe...');
       } catch (err) {
         console.error('Camera error:', err);
-        setTrackingBadge('camara bloqueada');
-        setStatus(`❌ Error cámara: ${err.message}`);
+        setTrackingBadge('camera blocked');
+        setStatus(`❌ Camera error: ${err.message}`);
       }
     }
 
@@ -348,7 +348,7 @@
 
     if (cameraReady) {
       try {
-        setStatus('⏳ Cargando MediaPipe Pose (Lite)...');
+        setStatus('⏳ Loading MediaPipe Pose (Lite)...');
         const vision = await FilesetResolver.forVisionTasks(
           'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
         );
@@ -357,12 +357,12 @@
 
         window.__page2Runtime = { runtimeEnv, activePoseDelegate };
         console.log(`✅ PoseLandmarker ready (LITE, ${activePoseDelegate})`);
-        setTrackingBadge('trackeando');
-        setStatus(`✅ Todo listo — Pose Lite + VRM body retarget (${activePoseDelegate})`, 5000);
+        setTrackingBadge('tracking');
+        setStatus(`✅ Everything is ready — Pose Lite + VRM body retarget (${activePoseDelegate})`, 5000);
       } catch (err) {
         console.error('MediaPipe init error:', err);
-        setTrackingBadge('error mediapipe');
-        setStatus(`❌ Error MediaPipe: ${err.message}`);
+        setTrackingBadge('mediapipe error');
+        setStatus(`❌ MediaPipe error: ${err.message}`);
       }
     }
 
@@ -397,7 +397,7 @@
               debugCounter++;
               TrackingHelpers.drawPose(trackingOverlayEl, videoEl, lm, { mirrored: true });
               latestRetargetStats = bodyRetargeter?.update(result, deltaSeconds) ?? null;
-              setTrackingBadge(worldLm?.length ? 'trackeando 3d' : 'trackeando 2d');
+              setTrackingBadge(worldLm?.length ? 'tracking 3d' : 'tracking 2d');
               if (debugCounter % 15 === 0) {
                 const nose = lm[0];
                 const lShoulder = lm[11];
@@ -413,11 +413,11 @@
             } else {
               latestRetargetStats = bodyRetargeter?.update(null, deltaSeconds) ?? null;
               if (poseDetected) {
-                debugEl.innerHTML = 'Pose: buscando...';
+                debugEl.innerHTML = 'Pose: searching...';
                 poseDetected = false;
               }
-              setTrackingBadge('sin landmarks');
-              TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Pose helper sin landmarks');
+              setTrackingBadge('no landmarks');
+              TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Pose helper without landmarks');
             }
           } catch (err) {
             latestRetargetStats = bodyRetargeter?.update(null, deltaSeconds) ?? null;
@@ -445,10 +445,10 @@
         frameLoadedVrm(currentVrm);
       }
       renderer.setSize(window.innerWidth, window.innerHeight);
-      TrackingHelpers.drawCameraGuide(trackingOverlayEl, cameraReady ? 'Pose helper activo' : 'Pose helper esperando cámara');
+      TrackingHelpers.drawCameraGuide(trackingOverlayEl, cameraReady ? 'Pose helper active' : 'Pose helper waiting for camera');
     });
 
-    TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Pose helper esperando cámara');
+    TrackingHelpers.drawCameraGuide(trackingOverlayEl, 'Pose helper waiting for camera');
   </script>
 </body>
 </html>
